@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/lextoumbourou/goodhosts"
 	gh "github.com/lextoumbourou/goodhosts"
 	i "github.com/tockins/interact"
 )
@@ -17,57 +16,17 @@ const (
 	nhltv   = "mf.svc.nhl.com"
 	domain1 = "freegamez.ga"
 	domain2 = "freesports.ddns.net"
+
+	defaultPath   = "${SystemRoot}/System32/drivers/etc/hosts"
+	efaultEOL     = "\r\n"
+	defaultSingle = true
 )
 
 var (
-	hosts   gh.Hosts
 	domains []string
 )
 
-func checkErr(err error) {
-	if err != nil {
-		hosts.Flush()
-		log.Println(err)
-		back(false)
-	}
-}
-
-func printHeader() {
-	cmd := exec.Command("cmd", "/c", "cls")
-	cmd.Stdout = os.Stdout
-	cmd.Run()
-	fmt.Println("\n>> NHL.tv to NHLGames\n>> Windows hosts file manager")
-}
-
-func getDomains() {
-	if len(domains) > 0 {
-		return
-	}
-
-	if _, err := os.Stat("domains.txt"); err == nil {
-		file, err := os.Open("domains.txt")
-		if err != nil {
-			return
-		}
-		defer file.Close()
-
-		fmt.Print(">> Loading domains:")
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			domain := scanner.Text()
-			domains = append(domains, domain)
-			fmt.Printf(" %v", domain)
-		}
-	} else if os.IsNotExist(err) {
-		domains = []string{domain1, domain2}
-		return
-	}
-}
-
 func main() {
-	hosts, err := goodhosts.NewHosts()
-	checkErr(err)
-
 	printHeader()
 
 	getDomains()
@@ -105,7 +64,10 @@ func main() {
 				Action: func(c i.Context) interface{} {
 					todo, _ := c.Ans().Int()
 					isTodoRequiresElevatedRights := todo == 2 || todo == 3
-					if isTodoRequiresElevatedRights && !hosts.IsWritable() {
+
+					hostsAPI := getHostsAPI()
+
+					if isTodoRequiresElevatedRights && !hostsAPI.IsWritable() {
 						printHeader()
 						fmt.Fprintln(os.Stderr, "\n>> Host file not writable. Try running with elevated privileges.\n>> Right click on me and Run as Administrator")
 						back(true)
@@ -120,7 +82,7 @@ func main() {
 						case 4:
 							list()
 						case 5:
-							os.Exit(0)
+							os.Exit(1)
 						}
 					}
 					return nil
@@ -157,7 +119,7 @@ func domain(todo int64) {
 
 					switch todo {
 					case 1:
-						check(ip[0])
+						check(val, ip[0])
 					case 2:
 						add(ip[0])
 					}
@@ -196,7 +158,7 @@ func back(canGoBackToMain bool) {
 					case 1:
 						main()
 					case 2:
-						os.Exit(0)
+						os.Exit(1)
 					}
 					return nil
 				},
@@ -205,21 +167,29 @@ func back(canGoBackToMain bool) {
 	})
 }
 
-func check(ip net.IP) {
+func check(domain string, ip net.IP) {
 	printHeader()
 
+	hostsAPI := getHostsAPI()
+
 	fmt.Println("\n>> Checking hosts entry")
-	if hosts.Has(ip.String(), nhltv) {
+	if hostsAPI.Has(ip.String(), nhltv) {
 		fmt.Println("	Passed: NHL.tv has a redirection to NHLGames")
 	} else {
 		fmt.Println("	Failed: NHL.tv has a redirection to NHLGames")
 	}
 
-	fmt.Println(">> Trying to reach the NHL.tv using NHLGames server")
-	nhltvIP, err := net.LookupIP(nhltv)
+	fmt.Println(">> Trying to reach NHL.tv using NHLGames server")
+	nhltvIPs, err := net.LookupIP(nhltv)
 	checkErr(err)
+	fmt.Printf(">> %v (%v) ... %v (%v)\n", nhltv, nhltvIPs, domain, ip)
 
-	passed := ip.Equal(nhltvIP[0])
+	passed := false
+	for _, nhltvIP := range nhltvIPs {
+		if ip.Equal(nhltvIP) {
+			passed = true
+		}
+	}
 	if passed {
 		fmt.Println("	Passed: NHL.tv redirection is working")
 	} else {
@@ -232,8 +202,13 @@ func check(ip net.IP) {
 func add(ip net.IP) {
 	printHeader()
 
+	hostsAPI := getHostsAPI()
+
 	fmt.Println("\n>> Adding hosts entry: NHL.tv to NHLGames")
-	err := hosts.Add(ip.String(), nhltv)
+	err := hostsAPI.Add(ip.String(), nhltv)
+	checkErr(err)
+
+	err = hostsAPI.Flush()
 	checkErr(err)
 
 	fmt.Println("	Success: Added", ip.String())
@@ -244,17 +219,22 @@ func add(ip net.IP) {
 func remove() {
 	printHeader()
 
+	hostsAPI := getHostsAPI()
+
 	fmt.Println("\n>> Removing hosts entries: All references of NHL.tv")
 	found := 0
 
-	for _, line := range hosts.Lines {
+	for _, line := range hostsAPI.Lines {
 		if !line.IsComment() && line.Raw != "" && itemInSlice(nhltv, line.Hosts) {
-			err := hosts.Remove(line.IP, nhltv)
+			err := hostsAPI.Remove(line.IP, nhltv)
 			checkErr(err)
 			fmt.Println("	Success: Removed", line.IP)
 			found++
 		}
 	}
+
+	err := hostsAPI.Flush()
+	checkErr(err)
 
 	if found == 0 {
 		fmt.Println("	Nothing found, nothing done")
@@ -266,9 +246,11 @@ func remove() {
 func list() {
 	printHeader()
 
+	hostsAPI := getHostsAPI()
+
 	fmt.Println("\n>> Listing all hosts entries")
 	total := 0
-	for _, line := range hosts.Lines {
+	for _, line := range hostsAPI.Lines {
 		var lineOutput string
 
 		if line.IsComment() || line.Raw == "" {
@@ -297,4 +279,49 @@ func itemInSlice(item string, list []string) bool {
 	}
 
 	return false
+}
+
+func checkErr(err error) {
+	if err != nil {
+		log.Println(err)
+		back(false)
+	}
+}
+
+func printHeader() {
+	cmd := exec.Command("cmd", "/c", "cls")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+	fmt.Println("\n>> NHL.tv to NHLGames\n>> Windows hosts file manager")
+}
+
+func getDomains() {
+	if len(domains) > 0 {
+		return
+	}
+
+	if _, err := os.Stat("domains.txt"); err == nil {
+		file, err := os.Open("domains.txt")
+		if err != nil {
+			return
+		}
+		defer file.Close()
+
+		fmt.Print(">> Loading domains:")
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			domain := scanner.Text()
+			domains = append(domains, domain)
+			fmt.Printf(" %v", domain)
+		}
+	} else if os.IsNotExist(err) {
+		domains = []string{domain1, domain2}
+		return
+	}
+}
+
+func getHostsAPI() gh.Hosts {
+	hostsAPI, err := gh.NewHosts()
+	checkErr(err)
+	return hostsAPI
 }
