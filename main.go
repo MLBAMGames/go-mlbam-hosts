@@ -13,22 +13,22 @@ import (
 )
 
 const (
-	nhltv   = "mf.svc.nhl.com"
-	domain1 = "freegamez.ga"
-	domain2 = "freesports.ddns.net"
-
 	defaultPath   = "${SystemRoot}/System32/drivers/etc/hosts"
 	efaultEOL     = "\r\n"
 	defaultSingle = true
 )
 
 var (
-	domains []string
+	nhltv = []string{"mf.svc.nhl.com"}
+	mlbtv = []string{"playback.svcs.mlb.com", "mlb-ws-mf.media.mlb.com"}
+	defaultDomains = []string{"freegamez.ga", "freesports.ddns.net"} // otherwise use domains.txt
+	domains []string // domain used
 )
 
 func main() {
 	printHeader()
 
+	
 	getDomains()
 
 	i.Run(&i.Interact{
@@ -39,19 +39,19 @@ func main() {
 					Choices: i.Choices{
 						Alternatives: []i.Choice{
 							{
-								Text:     "Test NHL.tv redirection to NHLGames",
+								Text:     "Test the hosts file entries",
 								Response: 1,
 							},
 							{
-								Text:     "Add entry for NHL.tv to NHLGames",
+								Text:     "Add the hosts file entries",
 								Response: 2,
 							},
 							{
-								Text:     "Remove NHLGames entries",
+								Text:     "Remove the hosts file entries",
 								Response: 3,
 							},
 							{
-								Text:     "List Windows hosts file entries",
+								Text:     "List all hosts file entries",
 								Response: 4,
 							},
 							{
@@ -70,7 +70,7 @@ func main() {
 					if isTodoRequiresElevatedRights && !hostsAPI.IsWritable() {
 						printHeader()
 						fmt.Fprintln(os.Stderr, "\n>> Host file not writable. Try running with elevated privileges.\n>> Right click on me and Run as Administrator")
-						back(true)
+						back(false)
 					} else {
 						switch todo {
 						case 1:
@@ -107,7 +107,7 @@ func domain(todo int64) {
 		Questions: []*i.Question{
 			{
 				Quest: i.Quest{
-					Msg: "\n>> Which NHLGames domain?",
+					Msg: "\n>> Which domain do you want to use to replace MLB.tv/NHL.tv Authentication server?",
 					Choices: i.Choices{
 						Alternatives: alternatives,
 					},
@@ -121,7 +121,7 @@ func domain(todo int64) {
 					case 1:
 						check(val, ip[0])
 					case 2:
-						add(ip[0])
+						add(val, ip[0])
 					}
 					return nil
 				},
@@ -173,47 +173,68 @@ func check(domain string, ip net.IP) {
 	hostsAPI := getHostsAPI()
 
 	fmt.Println("\n>> Checking hosts entry")
-	if hostsAPI.Has(ip.String(), nhltv) {
-		fmt.Println("	Passed: NHL.tv has a redirection to NHLGames")
-	} else {
-		fmt.Println("	Failed: NHL.tv has a redirection to NHLGames")
-	}
-
-	fmt.Println(">> Trying to reach NHL.tv using NHLGames server")
-	nhltvIPs, err := net.LookupIP(nhltv)
-	checkErr(err)
-	fmt.Printf(">> %v (%v) ... %v (%v)\n", nhltv, nhltvIPs, domain, ip)
-
-	passed := false
-	for _, nhltvIP := range nhltvIPs {
-		if ip.Equal(nhltvIP) {
-			passed = true
+	passed := true
+	for _,mediaTvDomain := range append(nhltv, mlbtv...) {
+		if !hostsAPI.Has(ip.String(), mediaTvDomain) {
+			fmt.Println("	Failed: Cannot find", mediaTvDomain, "authentication server redirection.")
+			passed = false
 		}
 	}
+
 	if passed {
-		fmt.Println("	Passed: NHL.tv redirection is working")
+		fmt.Println("	Passed: Found MLB.tv/NHL.tv authentication server redirection.")
 	} else {
-		fmt.Println("	Failed: NHL.tv redirection is not working")
+		back(true)
+	}
+
+	fmt.Println()
+	fmt.Println(">> Trying to reach MLB.tv/NHL.tv using the redirection to a custom domain")
+	
+	allPassed := true
+	for _,mediaTvDomain := range append(nhltv, mlbtv...) {
+		ips, err := net.LookupIP(mediaTvDomain)
+		checkErr(err)
+		fmt.Printf("	>> %v (%v) ... %v (%v)\n", mediaTvDomain, ips, domain, ip)
+
+		passed = false
+		for _, mediaTvIP := range ips {
+			if ip.Equal(mediaTvIP) {
+				fmt.Println("		Passed: MLB.tv/NHL.tv redirection from", mediaTvIP, "to", mediaTvDomain, "is working")
+				passed = true
+			}
+		}
+		if !passed {
+			fmt.Println("		Failed: MLB.tv/NHL.tv redirection to", mediaTvDomain, "isn't working")
+			allPassed = false
+		}
+	}
+
+	fmt.Println()
+	if allPassed {
+		fmt.Println("	Passed: All MLB.tv/NHL.tv redirection are working")
+	} else {
+		fmt.Println("	Failed: One or more MLB.tv/NHL.tv redirection are not working")
 	}
 
 	back(true)
 }
 
-func add(ip net.IP) {
+func add(domain string, ip net.IP) {
 	printHeader()
 
 	hostsAPI := getHostsAPI()
 
-	fmt.Println("\n>> Adding hosts entry: NHL.tv to NHLGames")
-	err := hostsAPI.Add(ip.String(), nhltv)
+	fmt.Println("\n>> Adding hosts file entries")
+	for _,mediaTvDomain := range append(nhltv, mlbtv...) {
+		err := hostsAPI.Add(ip.String(), mediaTvDomain)
+		checkErr(err)
+		fmt.Println("	Success: Added", mediaTvDomain, "redirection to", domain, "(", ip.String(), ")")
+	}
+
+	err := hostsAPI.Flush()
 	checkErr(err)
 
-	err = hostsAPI.Flush()
-	checkErr(err)
-
-	fmt.Println("	Success: Added", ip.String())
-
-	back(false)
+	back(true)
 }
 
 func remove() {
@@ -221,15 +242,17 @@ func remove() {
 
 	hostsAPI := getHostsAPI()
 
-	fmt.Println("\n>> Removing hosts entries: All references of NHL.tv")
+	fmt.Println("\n>> Removing hosts entries: All references of MLB.tv/NHL.tv")
 	found := 0
 
 	for _, line := range hostsAPI.Lines {
-		if !line.IsComment() && line.Raw != "" && itemInSlice(nhltv, line.Hosts) {
-			err := hostsAPI.Remove(line.IP, nhltv)
-			checkErr(err)
-			fmt.Println("	Success: Removed", line.IP)
-			found++
+		for _, mediaTvDomain := range append(nhltv, mlbtv...) {
+			if !line.IsComment() && line.Raw != "" && itemInSlice(mediaTvDomain, line.Hosts) {
+				err := hostsAPI.Remove(line.IP, mediaTvDomain)
+				checkErr(err)
+				fmt.Println("	Success: Removed", mediaTvDomain, "redirection to", line.IP)
+				found++
+			}
 		}
 	}
 
@@ -240,7 +263,7 @@ func remove() {
 		fmt.Println("	Nothing found, nothing done")
 	}
 
-	back(false)
+	back(true)
 }
 
 func list() {
@@ -292,7 +315,7 @@ func printHeader() {
 	cmd := exec.Command("cmd", "/c", "cls")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
-	fmt.Println("\n>> NHL.tv to NHLGames\n>> Windows hosts file manager")
+	fmt.Println("\n>> Go MLBAM hosts\n>> Windows hosts file manager to redirect NHL.tv and MLB.tv authentication to a custom hostname")
 }
 
 func getDomains() {
@@ -315,7 +338,7 @@ func getDomains() {
 			fmt.Printf(" %v", domain)
 		}
 	} else if os.IsNotExist(err) {
-		domains = []string{domain1, domain2}
+		domains = defaultDomains
 		return
 	}
 }
