@@ -1,13 +1,15 @@
 go-mlbam-hosts
 
 ```
->> NHL.tv to NHLGames
->> Windows hosts file manager
+>> Go MLBAM hosts
+>> Windows hosts file manager to redirect NHL.tv and MLB.tv authentication to a custom hostname
 
 >> What you want to do ?
-        1) Test NHL.tv redirection to NHLGames
-        2) Add entry for NHL.tv to NHLGames
-        3) Remove NHLGames entries
-        4) List Windows hosts file entries
+        1) Test the hosts file entries
+        2) Add the hosts file entries
+        3) Remove the hosts file entries
+        4) List all hosts file entries
         5) Exit
+? Answer
+_
 ```
